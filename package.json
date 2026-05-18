@@ -23,7 +23,8 @@
     "recharts": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "axios": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
