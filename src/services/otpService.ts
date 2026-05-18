@@ -1,7 +1,6 @@
-// ─── OTP Service ──────────────────────────────────────────────────────────────
-// Handles generating, storing, verifying, and simulating sending OTPs.
-// Removed @emailjs/browser dependency for frontend-only simulation.
-// In production, integrate a backend (Node.js + nodemailer/Twilio) for real emails/SMS.
+// ─── OTP Utility Service ──────────────────────────────────────────────────────
+// Core functionality for generating, storing, and verifying OTPs in localStorage.
+// All email/SMS simulation removed. Frontend only.
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Generate a 6-digit OTP
@@ -33,17 +32,4 @@ export function verifyOTP(key: string, inputOtp: string): 'valid' | 'invalid' | 
   } catch {
     return 'invalid';
   }
-}
-
-// Simulate sending OTP via Email (console log only)
-export async function sendEmailOTP(email: string, name: string, otp: string): Promise<{ success: boolean; simulated: boolean }> {
-  console.log(`%c📧 OTP for ${email}: ${otp}`, 'background:#1e40af;color:white;padding:4px 8px;border-radius:4px;font-size:14px;');
-  return { success: true, simulated: true };
-}
-
-// Simulate sending OTP via SMS (console log only)
-// Real SMS requires a backend with Twilio/Semaphore/etc.
-export async function sendSmsOTP(phone: string, otp: string): Promise<{ success: boolean; simulated: boolean }> {
-  console.log(`%c📱 SMS OTP for ${phone}: ${otp}`, 'background:#059669;color:white;padding:4px 8px;border-radius:4px;font-size:14px;');
-  return { success: true, simulated: true };
 }
