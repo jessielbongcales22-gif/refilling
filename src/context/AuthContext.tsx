@@ -1,162 +1,94 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User } from '../types';
-import { seedUsers } from '../data/seed';
+import React, { createContext, useContext, useEffect, useState } from "react";
 
-// ── API config (read at runtime from vite env) ───────────────────────────────
-const API_URL    = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const USE_API    = import.meta.env.VITE_USE_API === 'true';
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: "admin" | "staff" | "customer";
+  phone?: string;
+  address?: string;
+}
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<User | null>;
-  register: (data: Omit<User, 'id' | 'createdAt'>) => Promise<User>;
-  logout: () => void;
+  token: string | null;
   isAuthenticated: boolean;
   isAdmin: boolean;
   isStaff: boolean;
   isCustomer: boolean;
-  usingApi: boolean;
+  login: (user: User, token: string) => void;
+  logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-function getLocalUsers(): User[] {
-  try {
-    const stored = localStorage.getItem('wm_users');
-    const parsed: User[] = stored ? JSON.parse(stored) : [];
-    const merged = [...parsed];
-    for (const seed of seedUsers) {
-      if (!merged.find(u => u.email === seed.email)) merged.push(seed);
-    }
-    return merged;
-  } catch { return seedUsers; }
-}
-function saveLocalUsers(users: User[]) {
-  localStorage.setItem('wm_users', JSON.stringify(users));
-}
-
-// ── API helpers ───────────────────────────────────────────────────────────────
-async function apiRequest(path: string, body: object) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Request failed');
-  return data;
-}
-
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser]         = useState<User | null>(null);
-  const [usingApi, setUsingApi] = useState(false);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    saveLocalUsers(getLocalUsers()); // always ensure seed users exist
+    const savedUser = localStorage.getItem("water_market_user");
+    const savedToken = localStorage.getItem("water_market_token");
 
-    // Restore session
-    try {
-      const session = localStorage.getItem('wm_user');
-      if (session) setUser(JSON.parse(session));
-    } catch { localStorage.removeItem('wm_user'); }
-
-    // Check if API is reachable
-    if (USE_API) {
-      fetch(`${API_URL}/health`)
-        .then(r => r.ok ? setUsingApi(true) : setUsingApi(false))
-        .catch(() => setUsingApi(false));
+    if (savedUser && savedToken) {
+      try {
+        setUser(JSON.parse(savedUser));
+        setToken(savedToken);
+      } catch {
+        localStorage.removeItem("water_market_user");
+        localStorage.removeItem("water_market_token");
+        localStorage.removeItem("isLoggedIn");
+      }
     }
   }, []);
 
-  // ── LOGIN ────────────────────────────────────────────────────────────────
-  const login = async (email: string, password: string): Promise<User | null> => {
-    // Try API first
-    if (USE_API) {
-      try {
-        const data = await apiRequest('/auth/login', { email, password });
-        localStorage.setItem('wm_token', data.token);
-        const u: User = { ...data.user, password: '' };
-        setUser(u);
-        localStorage.setItem('wm_user', JSON.stringify(u));
-        setUsingApi(true);
-        return u;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
-        // If wrong credentials — don't fallback, surface the error
-        if (msg === 'Invalid email or password') return null;
-        // Network error — fallback to localStorage
-        console.warn('API unreachable — using localStorage');
-        setUsingApi(false);
-      }
-    }
+  const login = (userData: User, authToken: string) => {
+    localStorage.setItem("water_market_user", JSON.stringify(userData));
+    localStorage.setItem("water_market_token", authToken);
+    localStorage.setItem("isLoggedIn", "true");
 
-    // localStorage fallback
-    const users = getLocalUsers();
-    const found = users.find(
-      u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-    if (found) {
-      setUser(found);
-      localStorage.setItem('wm_user', JSON.stringify(found));
-      return found;
-    }
-    return null;
+    setUser(userData);
+    setToken(authToken);
   };
 
-  // ── REGISTER ─────────────────────────────────────────────────────────────
-  const register = async (data: Omit<User, 'id' | 'createdAt'>): Promise<User> => {
-    if (USE_API) {
-      try {
-        const result = await apiRequest('/auth/register', data);
-        localStorage.setItem('wm_token', result.token);
-        const u: User = { ...result.user, password: '' };
-        setUser(u);
-        localStorage.setItem('wm_user', JSON.stringify(u));
-        setUsingApi(true);
-        return u;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
-        if (msg.includes('already exists')) throw new Error(msg);
-        console.warn('API unreachable — registering locally');
-        setUsingApi(false);
-      }
-    }
-
-    // localStorage fallback
-    const users = getLocalUsers();
-    if (users.find(u => u.email.toLowerCase() === data.email.toLowerCase())) {
-      throw new Error('Email already exists.');
-    }
-    const newUser: User = { ...data, id: 'u' + Date.now(), createdAt: new Date().toISOString() };
-    saveLocalUsers([...users, newUser]);
-    setUser(newUser);
-    localStorage.setItem('wm_user', JSON.stringify(newUser));
-    return newUser;
-  };
-
-  // ── LOGOUT ───────────────────────────────────────────────────────────────
   const logout = () => {
+    localStorage.removeItem("water_market_user");
+    localStorage.removeItem("water_market_token");
+    localStorage.removeItem("isLoggedIn");
+
     setUser(null);
-    localStorage.removeItem('wm_user');
-    localStorage.removeItem('wm_token');
+    setToken(null);
   };
+
+  const isAuthenticated = !!user && !!token;
+  const isAdmin = user?.role === "admin";
+  const isStaff = user?.role === "staff";
+  const isCustomer = user?.role === "customer";
 
   return (
-    <AuthContext.Provider value={{
-      user, login, register, logout, usingApi,
-      isAuthenticated: !!user,
-      isAdmin:    user?.role === 'admin',
-      isStaff:    user?.role === 'staff',
-      isCustomer: user?.role === 'customer',
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isAuthenticated,
+        isAdmin,
+        isStaff,
+        isCustomer,
+        login,
+        logout
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used inside AuthProvider");
+  }
+
+  return context;
 }
