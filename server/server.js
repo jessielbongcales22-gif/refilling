@@ -1,3 +1,4 @@
+// server/server.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -27,112 +28,74 @@ const __dirname = path.dirname(__filename);
 app.use(
   cors({
     origin: "*",
-    credentials: true
+    credentials: true,
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// -------------------------
+// API Routes
+// -------------------------
+
+// Health check
 app.get("/api/health", async (req, res) => {
   try {
     await testConnection();
-
-    res.json({
-      success: true,
-      message: "Server and database connected successfully"
-    });
+    res.json({ success: true, message: "Server and database connected successfully" });
   } catch (error) {
     console.error("Health check database error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Server is running, but database connection failed",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Server is running, but database connection failed", error: error.message });
   }
 });
 
+// Login
 app.post("/api/login", async (req, res) => {
   try {
     const { email, username, password } = req.body;
-
     const loginValue = email || username;
 
     if (!loginValue || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email/username and password are required"
-      });
+      return res.status(400).json({ success: false, message: "Email/username and password are required" });
     }
 
     const pool = getPool();
-
     const [users] = await pool.execute(
       "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
       [loginValue, loginValue]
     );
 
     if (users.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid login credentials"
-      });
+      return res.status(401).json({ success: false, message: "Invalid login credentials" });
     }
 
     const user = users[0];
-
-    const isPasswordCorrect = await bcrypt.compare(
-      password,
-      user.password_hash
-    );
+    const isPasswordCorrect = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordCorrect) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid login credentials"
-      });
+      return res.status(401).json({ success: false, message: "Invalid login credentials" });
     }
 
     const token = jwt.sign(
-      {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      },
+      { id: user.id, username: user.username, email: user.email, role: user.role },
       process.env.JWT_SECRET || "water-market-secret-key",
-      {
-        expiresIn: "1d"
-      }
+      { expiresIn: "1d" }
     );
 
     res.json({
       success: true,
       message: "Login successful",
       token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        address: user.address
-      }
+      user: { id: user.id, username: user.username, email: user.email, role: user.role, phone: user.phone, address: user.address },
     });
   } catch (error) {
     console.error("Login error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Server error during login",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Server error during login", error: error.message });
   }
 });
 
-// Optional payment routes.
-// This prevents Render from crashing if payment.js has missing packages or errors.
+// Optional payment routes
 try {
   const paymentModule = await import("./routes/payment.js");
   app.use("/api/payment", paymentModule.default);
@@ -141,30 +104,28 @@ try {
   console.warn("Payment routes skipped:", error.message);
 }
 
-// Serve frontend build
+// -------------------------
+// Serve React frontend
+// -------------------------
 const distPath = path.join(__dirname, "../dist");
 
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 
-  app.get("*", (req, res, next) => {
+  // SPA fallback route
+  app.get(/.*/, (req, res) => {
     if (req.path.startsWith("/api")) {
-      return next();
+      return res.status(404).json({ success: false, message: "API route not found" });
     }
-
     res.sendFile(path.join(distPath, "index.html"));
   });
 } else {
   console.warn("dist folder not found. Frontend build may be missing.");
 }
 
-app.use("/api", (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "API route not found"
-  });
-});
-
+// -------------------------
+// Start server
+// -------------------------
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`Server running on port ${PORT}`);
 
