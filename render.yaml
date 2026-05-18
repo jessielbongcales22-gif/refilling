@@ -1,0 +1,22 @@
+# Render Blueprint — deploy this as a Web Service
+services:
+  - type: web
+    name: water-market-station
+    runtime: node
+    buildCommand: chmod +x render-build.sh && ./render-build.sh
+    startCommand: cd server && node server.js
+    envVars:
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: PORT
+        value: 3001
