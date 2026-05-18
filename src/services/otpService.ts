@@ -1,6 +1,6 @@
 // ─── OTP Utility Service ──────────────────────────────────────────────────────
-// Core functionality for generating, storing, and verifying OTPs in localStorage.
-// All email/SMS simulation removed. Frontend only.
+// Core functions for generating, storing, and verifying OTPs in localStorage.
+// All email/SMS sending removed — frontend only.
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Generate a 6-digit OTP
