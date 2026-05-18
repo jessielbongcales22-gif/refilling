@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "latest",
+    "@vitejs/plugin-react": "latest",
     "bcrypt": "latest",
     "cors": "latest",
     "dotenv": "latest",
@@ -17,13 +18,13 @@
     "react-dom": "latest",
     "sqlite": "latest",
     "sqlite3": "latest",
-    "tailwindcss": "latest"
-  },
-  "devDependencies": {
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
+    "tailwindcss": "latest",
     "typescript": "latest",
     "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
   }
 }
