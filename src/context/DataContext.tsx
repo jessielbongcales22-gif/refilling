@@ -1,250 +1,283 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Order, Product } from '../types';
-import { seedOrders, seedProducts } from '../data/seed';
+import React, { createContext, useContext, useEffect, useState } from "react";
+import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const USE_API = import.meta.env.VITE_USE_API === 'true';
-
-const SEED_VERSION = 'v5-clean';
-
-// ── API helper ────────────────────────────────────────────────────────────────
-async function api(path: string, method = 'GET', body?: object) {
-  const token = localStorage.getItem('wm_token');
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!res.ok) {
-    const d = await res.json().catch(() => ({}));
-    throw new Error(d.error || 'API error');
-  }
-  return res.json();
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: "admin" | "staff" | "customer";
+  phone?: string;
+  address?: string;
+  created_at?: string;
 }
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-function initLocalProducts(): Product[] {
-  try {
-    if (localStorage.getItem('wm_seed_version') !== SEED_VERSION) {
-      localStorage.setItem('wm_products', JSON.stringify(seedProducts));
-      return seedProducts;
-    }
-    const s = localStorage.getItem('wm_products');
-    return s ? JSON.parse(s) : seedProducts;
-  } catch { return seedProducts; }
+export interface Order {
+  id: number;
+  user_id?: number | null;
+  customer_name: string;
+  customerName?: string;
+  phone: string;
+  address: string;
+  quantity: number;
+  price_per_container: number;
+  pricePerContainer?: number;
+  total_amount: number;
+  totalAmount?: number;
+  order_type?: "online" | "walk_in";
+  orderType?: "online" | "walk_in";
+  status: string;
+  created_at?: string;
 }
 
-function initLocalOrders(): Order[] {
-  try {
-    if (localStorage.getItem('wm_seed_version') !== SEED_VERSION) {
-      localStorage.setItem('wm_orders', JSON.stringify(seedOrders));
-      return seedOrders;
-    }
-    const s = localStorage.getItem('wm_orders');
-    return s ? JSON.parse(s) : seedOrders;
-  } catch { return seedOrders; }
+export interface InventoryItem {
+  id: number;
+  name: string;
+  category?: string;
+  quantity: number;
+  unit?: string;
+  reorder_level?: number;
+  reorderLevel?: number;
+  created_at?: string;
 }
 
-// ── Context types ─────────────────────────────────────────────────────────────
 interface DataContextType {
-  products: Product[];
+  users: User[];
   orders: Order[];
-  usingApi: boolean;
-  newOrderAlert: Order | null;
-  clearNewOrderAlert: () => void;
-  addProduct:    (p: Omit<Product, 'id'>) => Promise<void>;
-  updateProduct: (id: string, p: Partial<Product>) => Promise<void>;
-  deleteProduct: (id: string) => Promise<void>;
-  addOrder:      (o: Omit<Order, 'id' | 'updatedAt'>) => Promise<void>;
-  updateOrder:   (id: string, o: Partial<Order>) => Promise<void>;
-  deleteOrder:   (id: string) => void;
-  getOrdersByCustomer: (cId: string) => Order[];
-  getLowStockProducts: () => Product[];
-  getTotalSales:   () => number;
-  getTodaySales:   () => number;
-  getMonthlySales: () => number;
-  getTodayOrders:  () => number;
-  getPendingOrders:() => number;
+  inventory: InventoryItem[];
+  loading: boolean;
+  error: string;
+
+  refreshData: () => Promise<void>;
+
+  addUser: (data: any) => Promise<any>;
+  updateUser: (id: number, data: any) => Promise<any>;
+  deleteUser: (id: number) => Promise<any>;
+
+  addOrder: (data: any) => Promise<any>;
+  createOrder: (data: any) => Promise<any>;
+  updateOrder: (id: number, data: any) => Promise<any>;
+  updateOrderStatus: (id: number, status: string) => Promise<any>;
+  deleteOrder: (id: number) => Promise<any>;
+
+  addInventoryItem: (data: any) => Promise<any>;
+  updateInventoryItem: (id: number, data: any) => Promise<any>;
+  deleteInventoryItem: (id: number) => Promise<any>;
 }
 
-const DataContext = createContext<DataContextType | null>(null);
+const DataContext = createContext<DataContextType | undefined>(undefined);
 
-export function DataProvider({ children }: { children: ReactNode }) {
-  const [products,      setProducts]      = useState<Product[]>([]);
-  const [orders,        setOrders]        = useState<Order[]>([]);
-  const [ready,         setReady]         = useState(false);
-  const [usingApi,      setUsingApi]      = useState(false);
-  const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
+function normalizeOrder(order: any): Order {
+  return {
+    ...order,
+    customerName: order.customer_name,
+    pricePerContainer: Number(order.price_per_container || 30),
+    totalAmount: Number(order.total_amount || 0),
+    orderType: order.order_type,
+    quantity: Number(order.quantity || 1),
+    price_per_container: Number(order.price_per_container || 30),
+    total_amount: Number(order.total_amount || 0)
+  };
+}
 
-  // ── Load data ──────────────────────────────────────────────────────────────
-  const loadFromApi = useCallback(async () => {
-    const [p, o] = await Promise.all([api('/products'), api('/orders')]);
-    setProducts(p);
-    setOrders(o);
-    setUsingApi(true);
-  }, []);
+function normalizeInventory(item: any): InventoryItem {
+  return {
+    ...item,
+    reorderLevel: Number(item.reorder_level || 10),
+    quantity: Number(item.quantity || 0)
+  };
+}
 
-  const loadFromLocal = useCallback(() => {
-    const p = initLocalProducts();
-    const o = initLocalOrders();
-    setProducts(p);
-    setOrders(o);
-    if (localStorage.getItem('wm_seed_version') !== SEED_VERSION) {
-      localStorage.setItem('wm_seed_version', SEED_VERSION);
-      localStorage.removeItem('wm_seeded_v2');
-      localStorage.removeItem('wm_seeded_version');
-      localStorage.removeItem('wm_seed_version');
-      // reset properly
-      localStorage.setItem('wm_products', JSON.stringify(seedProducts));
-      localStorage.setItem('wm_orders', JSON.stringify(seedOrders));
-      localStorage.setItem('wm_seed_version', SEED_VERSION);
+export function DataProvider({ children }: { children: React.ReactNode }) {
+  const [users, setUsers] = useState<User[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const refreshData = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [usersRes, ordersRes, inventoryRes] = await Promise.all([
+        axios.get("/api/users"),
+        axios.get("/api/orders"),
+        axios.get("/api/inventory")
+      ]);
+
+      setUsers(usersRes.data.users || []);
+      setOrders((ordersRes.data.orders || []).map(normalizeOrder));
+      setInventory((inventoryRes.data.items || []).map(normalizeInventory));
+    } catch (err: any) {
+      console.error("Refresh data error:", err);
+      setError(
+        err.response?.data?.message ||
+          "Failed to load data from database."
+      );
+    } finally {
+      setLoading(false);
     }
-    setUsingApi(false);
-  }, []);
+  };
 
   useEffect(() => {
-    const init = async () => {
-      if (USE_API) {
-        try {
-          await loadFromApi();
-        } catch {
-          console.warn('⚠️  API not reachable — using localStorage');
-          loadFromLocal();
-        }
-      } else {
-        loadFromLocal();
-      }
-      setReady(true);
+    refreshData();
+  }, []);
+
+  const addUser = async (data: any) => {
+    const payload = {
+      username: data.username || data.name || data.fullName,
+      email: data.email,
+      phone: data.phone || "",
+      address: data.address || "",
+      password: data.password || "password123",
+      role: data.role || "customer"
     };
-    init();
-  }, []);
 
-  // ── Poll every 5s to stay in sync ─────────────────────────────────────────
-  useEffect(() => {
-    if (!ready) return;
-    const interval = setInterval(async () => {
-      if (usingApi) {
-        try {
-          const [p, o] = await Promise.all([api('/products'), api('/orders')]);
-          setProducts(p);
-          setOrders(prev => {
-            const prevIds = new Set(prev.map(x => x.id));
-            const fresh = o.filter((x: Order) => !prevIds.has(x.id) && x.orderType === 'delivery');
-            if (fresh.length > 0) setNewOrderAlert(fresh[fresh.length - 1]);
-            return o;
-          });
-        } catch { /* ignore polling errors */ }
-      } else {
-        // localStorage sync across tabs
-        const sp = localStorage.getItem('wm_products');
-        const so = localStorage.getItem('wm_orders');
-        if (sp) setProducts(JSON.parse(sp));
-        if (so) {
-          const parsed: Order[] = JSON.parse(so);
-          setOrders(prev => {
-            const prevIds = new Set(prev.map(x => x.id));
-            const fresh = parsed.filter(x => !prevIds.has(x.id) && x.orderType === 'delivery');
-            if (fresh.length > 0) setNewOrderAlert(fresh[fresh.length - 1]);
-            return parsed;
-          });
-        }
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [ready, usingApi]);
-
-  // ── Save helpers ───────────────────────────────────────────────────────────
-  const saveP = (p: Product[]) => { setProducts(p); localStorage.setItem('wm_products', JSON.stringify(p)); };
-  const saveO = (o: Order[])   => { setOrders(o);   localStorage.setItem('wm_orders',   JSON.stringify(o)); };
-
-  // ── Products CRUD ──────────────────────────────────────────────────────────
-  const addProduct = async (p: Omit<Product, 'id'>) => {
-    if (usingApi) { await api('/products', 'POST', p); const d = await api('/products'); setProducts(d); }
-    else saveP([...products, { ...p, id: 'p' + Date.now() }]);
+    const res = await axios.post("/api/users", payload);
+    await refreshData();
+    return res.data;
   };
 
-  const updateProduct = async (id: string, p: Partial<Product>) => {
-    if (usingApi) { const ex = products.find(x => x.id === id); await api(`/products/${id}`, 'PUT', { ...ex, ...p }); const d = await api('/products'); setProducts(d); }
-    else saveP(products.map(x => x.id === id ? { ...x, ...p } : x));
+  const updateUser = async (id: number, data: any) => {
+    const payload = {
+      username: data.username || data.name || data.fullName,
+      email: data.email,
+      phone: data.phone || "",
+      address: data.address || "",
+      role: data.role || "customer"
+    };
+
+    const res = await axios.put(`/api/users/${id}`, payload);
+    await refreshData();
+    return res.data;
   };
 
-  const deleteProduct = async (id: string) => {
-    if (usingApi) { await api(`/products/${id}`, 'DELETE'); const d = await api('/products'); setProducts(d); }
-    else saveP(products.filter(x => x.id !== id));
+  const deleteUser = async (id: number) => {
+    const res = await axios.delete(`/api/users/${id}`);
+    await refreshData();
+    return res.data;
   };
 
-  // ── Orders CRUD ────────────────────────────────────────────────────────────
-  const addOrder = async (o: Omit<Order, 'id' | 'updatedAt'>) => {
-    if (usingApi) {
-      await api('/orders', 'POST', o);
-      const d = await api('/orders');
-      setOrders(d);
-    } else {
-      const now = new Date().toISOString();
-      const newO: Order = { ...o, id: 'o' + Date.now(), updatedAt: now };
-      const updated = [...orders, newO];
-      saveO(updated);
-      // Deduct stock locally
-      saveP(products.map(p => {
-        const item = o.items.find(i => i.productId === p.id);
-        return item ? { ...p, stock: Math.max(0, p.stock - item.quantity) } : p;
-      }));
-    }
+  const addOrder = async (data: any) => {
+    const quantity = Number(data.quantity || 1);
+    const price = Number(data.price_per_container || data.pricePerContainer || 30);
+
+    const payload = {
+      user_id: data.user_id || data.userId || null,
+      customer_name: data.customer_name || data.customerName || data.name,
+      phone: data.phone || "",
+      address: data.address || "",
+      quantity,
+      price_per_container: price,
+      order_type: data.order_type || data.orderType || "online",
+      status: data.status || "pending"
+    };
+
+    const res = await axios.post("/api/orders", payload);
+    await refreshData();
+    return res.data;
   };
 
-  const updateOrder = async (id: string, o: Partial<Order>) => {
-    if (usingApi) {
-      await api(`/orders/${id}`, 'PUT', o);
-      const d = await api('/orders');
-      setOrders(d);
-    } else {
-      saveO(orders.map(x => x.id === id ? { ...x, ...o, updatedAt: new Date().toISOString() } : x));
-    }
+  const createOrder = addOrder;
+
+  const updateOrder = async (id: number, data: any) => {
+    const quantity = Number(data.quantity || 1);
+    const price = Number(data.price_per_container || data.pricePerContainer || 30);
+
+    const payload = {
+      customer_name: data.customer_name || data.customerName || data.name,
+      phone: data.phone || "",
+      address: data.address || "",
+      quantity,
+      price_per_container: price,
+      order_type: data.order_type || data.orderType || "online",
+      status: data.status || "pending"
+    };
+
+    const res = await axios.put(`/api/orders/${id}`, payload);
+    await refreshData();
+    return res.data;
   };
 
-  const deleteOrder = async (id: string) => {
-    if (usingApi) { await api(`/orders/${id}`, 'DELETE'); const d = await api('/orders'); setOrders(d); }
-    else saveO(orders.filter(x => x.id !== id));
+  const updateOrderStatus = async (id: number, status: string) => {
+    const res = await axios.patch(`/api/orders/${id}/status`, { status });
+    await refreshData();
+    return res.data;
   };
 
-  // ── Computed values ────────────────────────────────────────────────────────
-  const getOrdersByCustomer = (cId: string) => orders.filter(o => o.customerId === cId);
-  const getLowStockProducts  = ()            => products.filter(p => p.stock <= p.minStock);
+  const deleteOrder = async (id: number) => {
+    const res = await axios.delete(`/api/orders/${id}`);
+    await refreshData();
+    return res.data;
+  };
 
-  const getTotalSales   = () => orders.filter(o => o.status === 'completed' && o.paymentStatus === 'paid').reduce((s, o) => s + o.totalAmount, 0);
-  const getTodaySales   = () => { const t = new Date().toDateString(); return orders.filter(o => o.status === 'completed' && new Date(o.createdAt).toDateString() === t).reduce((s, o) => s + o.totalAmount, 0); };
-  const getMonthlySales = () => { const now = new Date(); return orders.filter(o => { const d = new Date(o.createdAt); return o.status === 'completed' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).reduce((s, o) => s + o.totalAmount, 0); };
-  const getTodayOrders  = () => { const t = new Date().toDateString(); return orders.filter(o => new Date(o.createdAt).toDateString() === t).length; };
-  const getPendingOrders= () => orders.filter(o => o.status === 'pending' || o.status === 'processing').length;
+  const addInventoryItem = async (data: any) => {
+    const payload = {
+      name: data.name,
+      category: data.category || "",
+      quantity: Number(data.quantity || 0),
+      unit: data.unit || "pcs",
+      reorder_level: Number(data.reorder_level || data.reorderLevel || 10)
+    };
 
-  if (!ready) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center space-y-3">
-        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto" />
-        <p className="text-sm text-gray-500">Connecting to database...</p>
-      </div>
-    </div>
-  );
+    const res = await axios.post("/api/inventory", payload);
+    await refreshData();
+    return res.data;
+  };
+
+  const updateInventoryItem = async (id: number, data: any) => {
+    const payload = {
+      name: data.name,
+      category: data.category || "",
+      quantity: Number(data.quantity || 0),
+      unit: data.unit || "pcs",
+      reorder_level: Number(data.reorder_level || data.reorderLevel || 10)
+    };
+
+    const res = await axios.put(`/api/inventory/${id}`, payload);
+    await refreshData();
+    return res.data;
+  };
+
+  const deleteInventoryItem = async (id: number) => {
+    const res = await axios.delete(`/api/inventory/${id}`);
+    await refreshData();
+    return res.data;
+  };
 
   return (
-    <DataContext.Provider value={{
-      products, orders, usingApi,
-      newOrderAlert, clearNewOrderAlert: () => setNewOrderAlert(null),
-      addProduct, updateProduct, deleteProduct,
-      addOrder, updateOrder, deleteOrder,
-      getOrdersByCustomer, getLowStockProducts,
-      getTotalSales, getTodaySales, getMonthlySales, getTodayOrders, getPendingOrders,
-    }}>
+    <DataContext.Provider
+      value={{
+        users,
+        orders,
+        inventory,
+        loading,
+        error,
+        refreshData,
+        addUser,
+        updateUser,
+        deleteUser,
+        addOrder,
+        createOrder,
+        updateOrder,
+        updateOrderStatus,
+        deleteOrder,
+        addInventoryItem,
+        updateInventoryItem,
+        deleteInventoryItem
+      }}
+    >
       {children}
     </DataContext.Provider>
   );
 }
 
 export function useData() {
-  const ctx = useContext(DataContext);
-  if (!ctx) throw new Error('useData must be used within DataProvider');
-  return ctx;
+  const context = useContext(DataContext);
+
+  if (!context) {
+    throw new Error("useData must be used inside DataProvider");
+  }
+
+  return context;
 }
