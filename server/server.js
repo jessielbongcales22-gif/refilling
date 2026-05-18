@@ -1,139 +1,95 @@
-// server/server.js
-import express from "express";
-import cors from "cors";
+import mysql from "mysql2/promise";
 import dotenv from "dotenv";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import path from "path";
-import fs from "fs";
-import { fileURLToPath } from "url";
-import { getPool, testConnection } from "./db/connection.js";
 
 dotenv.config();
 
-process.on("uncaughtException", (error) => {
-  console.error("UNCAUGHT EXCEPTION:", error);
-});
+let pool;
 
-process.on("unhandledRejection", (error) => {
-  console.error("UNHANDLED REJECTION:", error);
-});
+function getSslConfig() {
+  const sslEnabled = process.env.DB_SSL === "true";
 
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-app.use(
-  cors({
-    origin: "*",
-    credentials: true,
-  })
-);
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// -------------------------
-// API Routes
-// -------------------------
-
-// Health check
-app.get("/api/health", async (req, res) => {
-  try {
-    await testConnection();
-    res.json({ success: true, message: "Server and database connected successfully" });
-  } catch (error) {
-    console.error("Health check database error:", error);
-    res.status(500).json({ success: false, message: "Server is running, but database connection failed", error: error.message });
+  if (!sslEnabled) {
+    return undefined;
   }
-});
 
-// Login
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, username, password } = req.body;
-    const loginValue = email || username;
+  if (process.env.DB_CA_CERT) {
+    return {
+      ca: process.env.DB_CA_CERT.replace(/\\n/g, "\n"),
+      rejectUnauthorized: true
+    };
+  }
 
-    if (!loginValue || !password) {
-      return res.status(400).json({ success: false, message: "Email/username and password are required" });
-    }
+  return {
+    rejectUnauthorized: true
+  };
+}
 
-    const pool = getPool();
-    const [users] = await pool.execute(
-      "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
-      [loginValue, loginValue]
-    );
-
-    if (users.length === 0) {
-      return res.status(401).json({ success: false, message: "Invalid login credentials" });
-    }
-
-    const user = users[0];
-    const isPasswordCorrect = await bcrypt.compare(password, user.password_hash);
-
-    if (!isPasswordCorrect) {
-      return res.status(401).json({ success: false, message: "Invalid login credentials" });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, username: user.username, email: user.email, role: user.role },
-      process.env.JWT_SECRET || "water-market-secret-key",
-      { expiresIn: "1d" }
-    );
-
-    res.json({
-      success: true,
-      message: "Login successful",
-      token,
-      user: { id: user.id, username: user.username, email: user.email, role: user.role, phone: user.phone, address: user.address },
+export function getPool() {
+  if (!pool) {
+    pool = mysql.createPool({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT || 3306),
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      ssl: getSslConfig()
     });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ success: false, message: "Server error during login", error: error.message });
   }
-});
 
-// Optional payment routes
-try {
-  const paymentModule = await import("./routes/payment.js");
-  app.use("/api/payment", paymentModule.default);
-  console.log("Payment routes loaded.");
-} catch (error) {
-  console.warn("Payment routes skipped:", error.message);
+  return pool;
 }
 
-// -------------------------
-// Serve React frontend
-// -------------------------
-const distPath = path.join(__dirname, "../dist");
-
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-
-  // SPA fallback route
-  app.get(/.*/, (req, res) => {
-    if (req.path.startsWith("/api")) {
-      return res.status(404).json({ success: false, message: "API route not found" });
-    }
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-} else {
-  console.warn("dist folder not found. Frontend build may be missing.");
+export async function testConnection() {
+  const db = getPool();
+  const [rows] = await db.execute("SELECT 1 AS connected");
+  return rows;
 }
 
-// -------------------------
-// Start server
-// -------------------------
-app.listen(PORT, "0.0.0.0", async () => {
-  console.log(`Server running on port ${PORT}`);
+export async function initDatabase() {
+  const db = getPool();
 
-  try {
-    await testConnection();
-    console.log("Database connected successfully.");
-  } catch (error) {
-    console.error("Database connection failed:", error.message);
-    console.error("Server will continue running.");
-  }
-});
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(100) NOT NULL,
+      email VARCHAR(150) NOT NULL UNIQUE,
+      phone VARCHAR(30),
+      address TEXT,
+      password_hash VARCHAR(255) NOT NULL,
+      role ENUM('admin', 'staff', 'customer') DEFAULT 'customer',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS water_orders (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NULL,
+      customer_name VARCHAR(150) NOT NULL,
+      phone VARCHAR(30) NOT NULL,
+      address TEXT NOT NULL,
+      quantity INT NOT NULL DEFAULT 1,
+      price_per_container DECIMAL(10,2) NOT NULL DEFAULT 30.00,
+      total_amount DECIMAL(10,2) NOT NULL,
+      status ENUM('pending', 'confirmed', 'delivered', 'cancelled') DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NULL,
+      action VARCHAR(255) NOT NULL,
+      details TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  console.log("Database tables checked/created successfully.");
+}
