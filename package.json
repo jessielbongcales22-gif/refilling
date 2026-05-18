@@ -6,24 +6,16 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node server/server.js"
-{
-  "scripts": {
-    "build": "vite build",
-    "start": "node server.js",
-    "dev": "vite"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^latest",
-    "vite": "^latest",
-    "react": "^latest",
-    "react-dom": "^latest"
+    "@vitejs/plugin-react": "latest",
+    "vite": "^7.2.4",
+    "react": "latest",
+    "react-dom": "latest"
   },
   "devDependencies": {
-    "@types/react": "^latest",
-    "@types/react-dom": "^latest",
-    "typescript": "^latest"
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest"
   }
-  }
-  }
-
-
+}
