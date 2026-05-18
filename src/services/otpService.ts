@@ -1,4 +1,4 @@
-import emailjs from '@emailjs/browser';
+
 
 // ─── EmailJS Configuration ────────────────────────────────────────────────────
 // To use REAL email OTP:
