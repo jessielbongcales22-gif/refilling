@@ -28,12 +28,7 @@ export function getPool() {
 }
 
 export async function testConnection() {
-  const connection = await getPool().getConnection();
-
-  try {
-    const [rows] = await connection.query("SELECT 1 AS connected");
-    return rows;
-  } finally {
-    connection.release();
-  }
+  const pool = getPool();
+  const [rows] = await pool.query("SELECT 1 AS connected");
+  return rows;
 }
