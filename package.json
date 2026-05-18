@@ -15,9 +15,11 @@
     "dotenv": "latest",
     "express": "latest",
     "jsonwebtoken": "latest",
+    "lucide-react": "latest",
     "mysql2": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-router-dom": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
     "vite": "latest"
