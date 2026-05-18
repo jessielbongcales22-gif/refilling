@@ -10,10 +10,11 @@
   "dependencies": {
     "@tailwindcss/vite": "latest",
     "@vitejs/plugin-react": "latest",
+    "axios": "latest",
     "bcryptjs": "latest",
     "cors": "latest",
     "dotenv": "latest",
-    "express": "latest",
+    "express": "^4.18.2",
     "jsonwebtoken": "latest",
     "lucide-react": "latest",
     "mysql2": "latest",
@@ -23,8 +24,7 @@
     "recharts": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
-    "vite": "latest",
-    "axios": "latest"
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
