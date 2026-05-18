@@ -71,44 +71,51 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
   };
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMessage("");
+  e.preventDefault();
+  setMessage("");
 
-    if (!loginEmail.trim() || !loginPassword.trim()) {
-      setMessage("Please enter your email and password.");
-      return;
+  if (!loginEmail.trim() || !loginPassword.trim()) {
+    setMessage("Please enter your email and password.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const response = await axios.post("/api/login", {
+      email: loginEmail.trim(),
+      username: loginEmail.trim(),
+      password: loginPassword
+    });
+
+    console.log("LOGIN RESPONSE:", response.data);
+
+    if (response.data && response.data.success === true) {
+      localStorage.setItem("water_market_token", response.data.token);
+      localStorage.setItem("water_market_user", JSON.stringify(response.data.user));
+      localStorage.setItem("isLoggedIn", "true");
+
+      setMessage("");
+      setShowModal(false);
+
+      onLogin();
+
+      // Force the app to refresh into the dashboard state
+      window.location.reload();
+    } else {
+      setMessage(response.data?.message || "Invalid login credentials.");
     }
+  } catch (error: any) {
+    console.error("Login error:", error);
 
-    try {
-      setLoading(true);
-
-      const response = await axios.post("/api/login", {
-        email: loginEmail.trim(),
-        username: loginEmail.trim(),
-        password: loginPassword,
-      });
-
-      if (response.data?.success) {
-        localStorage.setItem("water_market_token", response.data.token || "");
-        localStorage.setItem(
-          "water_market_user",
-          JSON.stringify(response.data.user || {})
-        );
-
-        setMessage("");
-        onLogin();
-      } else {
-        setMessage(response.data?.message || "Invalid login credentials.");
-      }
-    } catch (error: any) {
-      setMessage(
-        error.response?.data?.message ||
-          "Login failed. Please check your account or server connection."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+    setMessage(
+      error.response?.data?.message ||
+        "Server error during login. Please check your database connection."
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
