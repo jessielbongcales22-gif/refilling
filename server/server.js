@@ -19,13 +19,8 @@ const __dirname = path.dirname(__filename);
 let pool = null;
 
 function getSslConfig() {
-  if (process.env.DB_SSL !== "true") return undefined;
-
-  if (process.env.DB_CA_CERT) {
-    return {
-      ca: process.env.DB_CA_CERT.replace(/\\n/g, "\n"),
-      rejectUnauthorized: true
-    };
+  if (process.env.DB_SSL !== "true") {
+    return undefined;
   }
 
   return {
@@ -49,6 +44,12 @@ function getPool() {
   }
 
   return pool;
+}
+
+async function testConnection() {
+  const db = getPool();
+  const [rows] = await db.execute("SELECT 1 AS connected");
+  return rows;
 }
 
 async function initDatabase() {
@@ -107,13 +108,7 @@ async function initDatabase() {
     )
   `);
 
-  console.log("Database tables ready.");
-}
-
-async function testConnection() {
-  const db = getPool();
-  const [rows] = await db.execute("SELECT 1 AS connected");
-  return rows;
+  console.log("Database tables checked.");
 }
 
 app.use(cors({ origin: "*" }));
@@ -123,11 +118,14 @@ app.use(express.urlencoded({ extended: true }));
 app.get("/api/health", async (req, res) => {
   try {
     await testConnection();
+
     res.json({
       success: true,
-      message: "Server and MySQL connected successfully"
+      message: "Server and MySQL database connected successfully"
     });
   } catch (error) {
+    console.error("Health check error:", error.message);
+
     res.status(500).json({
       success: false,
       message: "Database connection failed",
@@ -167,7 +165,7 @@ app.post("/api/register", async (req, res) => {
 
     const [result] = await db.execute(
       `
-      INSERT INTO users
+      INSERT INTO users 
       (username, email, password_hash, role, phone, address)
       VALUES (?, ?, ?, ?, ?, ?)
       `,
@@ -183,7 +181,7 @@ app.post("/api/register", async (req, res) => {
 
     await db.execute(
       "INSERT INTO activity_logs (user_id, action, details) VALUES (?, ?, ?)",
-      [result.insertId, "CREATE_USER", `Created ${finalRole} account: ${email}`]
+      [result.insertId, "REGISTER", `Created ${finalRole} account: ${email}`]
     );
 
     res.status(201).json({
@@ -200,6 +198,7 @@ app.post("/api/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
+
     res.status(500).json({
       success: false,
       message: `Server error during registration: ${error.message}`
@@ -249,10 +248,11 @@ app.post("/api/login", async (req, res) => {
 
       if (isPasswordCorrect) {
         const newHash = await bcrypt.hash(password, 10);
-        await db.execute("UPDATE users SET password_hash = ? WHERE id = ?", [
-          newHash,
-          user.id
-        ]);
+
+        await db.execute(
+          "UPDATE users SET password_hash = ? WHERE id = ?",
+          [newHash, user.id]
+        );
       }
     }
 
@@ -271,7 +271,9 @@ app.post("/api/login", async (req, res) => {
         role: user.role
       },
       process.env.JWT_SECRET || "water-market-secret-key",
-      { expiresIn: "1d" }
+      {
+        expiresIn: "1d"
+      }
     );
 
     await db.execute(
@@ -294,6 +296,7 @@ app.post("/api/login", async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
+
     res.status(500).json({
       success: false,
       message: `Server error during login: ${error.message}`
@@ -311,7 +314,10 @@ app.get("/api/users", async (req, res) => {
       ORDER BY created_at DESC
     `);
 
-    res.json({ success: true, users });
+    res.json({
+      success: true,
+      users
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -385,9 +391,7 @@ app.post("/api/users", async (req, res) => {
 
 app.put("/api/users/:id", async (req, res) => {
   try {
-    const { id } = req.params;
     const { username, email, phone, address, role } = req.body;
-
     const db = getPool();
 
     await db.execute(
@@ -396,7 +400,7 @@ app.put("/api/users/:id", async (req, res) => {
       SET username = ?, email = ?, phone = ?, address = ?, role = ?
       WHERE id = ?
       `,
-      [username, email, phone || null, address || null, role, id]
+      [username, email, phone || null, address || null, role, req.params.id]
     );
 
     res.json({
@@ -439,7 +443,10 @@ app.get("/api/orders", async (req, res) => {
       ORDER BY created_at DESC
     `);
 
-    res.json({ success: true, orders });
+    res.json({
+      success: true,
+      orders
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -493,19 +500,6 @@ app.post("/api/orders", async (req, res) => {
       ]
     );
 
-    const newOrder = {
-      id: result.insertId,
-      user_id: user_id || null,
-      customer_name,
-      phone,
-      address,
-      quantity: finalQuantity,
-      price_per_container: finalPrice,
-      total_amount: totalAmount,
-      order_type: order_type || "online",
-      status: status || "pending"
-    };
-
     await db.execute(
       "INSERT INTO activity_logs (user_id, action, details) VALUES (?, ?, ?)",
       [
@@ -518,10 +512,20 @@ app.post("/api/orders", async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Order recorded successfully",
-      order: newOrder
+      order: {
+        id: result.insertId,
+        user_id: user_id || null,
+        customer_name,
+        phone,
+        address,
+        quantity: finalQuantity,
+        price_per_container: finalPrice,
+        total_amount: totalAmount,
+        order_type: order_type || "online",
+        status: status || "pending"
+      }
     });
   } catch (error) {
-    console.error("Create order error:", error);
     res.status(500).json({
       success: false,
       message: `Failed to record order: ${error.message}`
@@ -529,67 +533,14 @@ app.post("/api/orders", async (req, res) => {
   }
 });
 
-app.put("/api/orders/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      customer_name,
-      phone,
-      address,
-      quantity,
-      price_per_container,
-      order_type,
-      status
-    } = req.body;
-
-    const finalQuantity = Number(quantity || 1);
-    const finalPrice = Number(price_per_container || 30);
-    const totalAmount = finalQuantity * finalPrice;
-
-    const db = getPool();
-
-    await db.execute(
-      `
-      UPDATE water_orders
-      SET customer_name = ?, phone = ?, address = ?, quantity = ?, 
-          price_per_container = ?, total_amount = ?, order_type = ?, status = ?
-      WHERE id = ?
-      `,
-      [
-        customer_name,
-        phone,
-        address,
-        finalQuantity,
-        finalPrice,
-        totalAmount,
-        order_type || "online",
-        status || "pending",
-        id
-      ]
-    );
-
-    res.json({
-      success: true,
-      message: "Order updated successfully"
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: `Failed to update order: ${error.message}`
-    });
-  }
-});
-
 app.patch("/api/orders/:id/status", async (req, res) => {
   try {
-    const { id } = req.params;
     const { status } = req.body;
-
     const db = getPool();
 
     await db.execute("UPDATE water_orders SET status = ? WHERE id = ?", [
       status,
-      id
+      req.params.id
     ]);
 
     res.json({
@@ -632,7 +583,10 @@ app.get("/api/inventory", async (req, res) => {
       ORDER BY created_at DESC
     `);
 
-    res.json({ success: true, items });
+    res.json({
+      success: true,
+      items
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -644,7 +598,6 @@ app.get("/api/inventory", async (req, res) => {
 app.post("/api/inventory", async (req, res) => {
   try {
     const { name, category, quantity, unit, reorder_level } = req.body;
-
     const db = getPool();
 
     const [result] = await db.execute(
@@ -682,60 +635,6 @@ app.post("/api/inventory", async (req, res) => {
   }
 });
 
-app.put("/api/inventory/:id", async (req, res) => {
-  try {
-    const { name, category, quantity, unit, reorder_level } = req.body;
-
-    const db = getPool();
-
-    await db.execute(
-      `
-      UPDATE inventory_items
-      SET name = ?, category = ?, quantity = ?, unit = ?, reorder_level = ?
-      WHERE id = ?
-      `,
-      [
-        name,
-        category || null,
-        Number(quantity || 0),
-        unit || "pcs",
-        Number(reorder_level || 10),
-        req.params.id
-      ]
-    );
-
-    res.json({
-      success: true,
-      message: "Inventory item updated successfully"
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: `Failed to update inventory item: ${error.message}`
-    });
-  }
-});
-
-app.delete("/api/inventory/:id", async (req, res) => {
-  try {
-    const db = getPool();
-
-    await db.execute("DELETE FROM inventory_items WHERE id = ?", [
-      req.params.id
-    ]);
-
-    res.json({
-      success: true,
-      message: "Inventory item deleted successfully"
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: `Failed to delete inventory item: ${error.message}`
-    });
-  }
-});
-
 app.get("/api/logs", async (req, res) => {
   try {
     const db = getPool();
@@ -747,7 +646,10 @@ app.get("/api/logs", async (req, res) => {
       LIMIT 100
     `);
 
-    res.json({ success: true, logs });
+    res.json({
+      success: true,
+      logs
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -771,6 +673,8 @@ if (fs.existsSync(distPath)) {
 
     res.sendFile(path.join(distPath, "index.html"));
   });
+} else {
+  console.warn("dist folder not found.");
 }
 
 app.listen(PORT, "0.0.0.0", async () => {
@@ -783,5 +687,6 @@ app.listen(PORT, "0.0.0.0", async () => {
     await initDatabase();
   } catch (error) {
     console.error("Database setup failed:", error.message);
+    console.error("Server is running, but database features may fail.");
   }
 });
