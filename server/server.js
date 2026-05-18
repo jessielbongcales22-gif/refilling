@@ -1,146 +1,163 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { getPool, testConnection } from './db/connection.js';
-import paymentRoutes from './routes/payment.js';
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import { getPool, testConnection } from "./db/connection.js";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors({ origin: '*' }));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(
+  cors({
+    origin: "*",
+    credentials: true
+  })
+);
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Payment routes
-app.use('/api/payment', paymentRoutes);
+// Health check
+app.get("/api/health", async (req, res) => {
+  try {
+    await testConnection();
 
-// ── JWT Middleware ──────────────────────────────────────────────────────────
-function authenticateToken(req, res, next) {
-  const token = (req.headers['authorization'] || '').split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Access denied' });
-  jwt.verify(token, process.env.JWT_SECRET || 'secret', (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid token' });
-    req.user = user;
-    next();
+    res.json({
+      success: true,
+      message: "Server and database are running"
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server is running, but database connection failed",
+      error: error.message
+    });
+  }
+});
+
+// Login route
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, username, password } = req.body;
+
+    const loginValue = email || username;
+
+    if (!loginValue || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email/username and password are required"
+      });
+    }
+
+    const pool = getPool();
+
+    const [users] = await pool.execute(
+      `SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1`,
+      [loginValue, loginValue]
+    );
+
+    if (users.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid login credentials"
+      });
+    }
+
+    const user = users[0];
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid login credentials"
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      },
+      process.env.JWT_SECRET || "temporary-secret-key",
+      { expiresIn: "1d" }
+    );
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+        address: user.address
+      }
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error during login",
+      error: error.message
+    });
+  }
+});
+
+// Optional payment routes
+try {
+  const paymentModule = await import("./routes/payment.js");
+  app.use("/api/payment", paymentModule.default);
+  console.log("Payment routes loaded");
+} catch (error) {
+  console.warn("Payment routes skipped:", error.message);
+}
+
+// Serve frontend build
+const distPath = path.join(__dirname, "../dist");
+
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api")) {
+      return next();
+    }
+
+    res.sendFile(path.join(distPath, "index.html"));
   });
 }
 
-function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role))
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    next();
-  };
-}
-
-// ── Health check ────────────────────────────────────────────────────────────
-app.get('/api/health', async (req, res) => {
-  const ok = await testConnection();
-  res.json({ status: ok ? 'connected' : 'disconnected', db: process.env.DB_NAME });
+// API 404
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "API route not found"
+  });
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// AUTH
-// ════════════════════════════════════════════════════════════════════════════
+// Start server
+app.listen(PORT, "0.0.0.0", async () => {
+  console.log(`Server running on port ${PORT}`);
 
-app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const [rows] = await getPool().query('SELECT * FROM users WHERE email = ?', [email]);
-    if (!rows.length) return res.status(401).json({ error: 'Invalid email or password' });
-
-    const user = rows[0];
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
-
-    const token = jwt.sign(
-      { id: user.id, username: user.username, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '24h' }
-    );
-    res.json({
-      token,
-      user: { id: user.id, username: user.username, email: user.email, role: user.role, phone: user.phone, address: user.address, createdAt: user.created_at },
-    });
-  } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Server error' });
+    await testConnection();
+    console.log("Database connected successfully");
+  } catch (error) {
+    console.error("Database connection failed:", error.message);
   }
 });
-
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { username, email, password, phone, address } = req.body;
-    const [existing] = await getPool().query('SELECT id FROM users WHERE email = ? OR username = ?', [email, username]);
-    if (existing.length) return res.status(400).json({ error: 'Email or username already exists' });
-
-    const hash = await bcrypt.hash(password, 10);
-    const id = 'u' + Date.now();
-    await getPool().query(
-      'INSERT INTO users (id, username, email, password_hash, role, phone, address) VALUES (?,?,?,?,?,?,?)',
-      [id, username, email, hash, 'customer', phone, address]
-    );
-    const token = jwt.sign({ id, username, email, role: 'customer' }, process.env.JWT_SECRET || 'secret', { expiresIn: '24h' });
-    res.status(201).json({ token, user: { id, username, email, role: 'customer', phone, address } });
-  } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// USERS
-// ════════════════════════════════════════════════════════════════════════════
-
-app.get('/api/users', authenticateToken, requireRole('admin'), async (req, res) => {
-  try {
-    const [users] = await getPool().query(
-      'SELECT id, username, email, role, phone, address, created_at FROM users ORDER BY created_at DESC'
-    );
-    res.json(users);
-  } catch (err) {
-    console.error('Get users error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.put('/api/users/:id/role', authenticateToken, requireRole('admin'), async (req, res) => {
-  try {
-    await getPool().query('UPDATE users SET role = ? WHERE id = ?', [req.body.role, req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Update role error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.delete('/api/users/:id', authenticateToken, requireRole('admin'), async (req, res) => {
-  try {
-    await getPool().query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE customer_id = ?)', [req.params.id]);
-    await getPool().query('DELETE FROM orders WHERE customer_id = ?', [req.params.id]);
-    await getPool().query('DELETE FROM users WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Delete user error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// PRODUCTS
-// ════════════════════════════════════════════════════════════════════════════
-
-app.get('/api/products', authenticateToken, async (req, res) => {
-  try {
-    const [rows] = await getPool().query('SELECT * FROM products ORDER BY type, name');
-    res.json(rows.map(p => ({
-      id: p.id, name: p.name, type: p.type,
-      price: Number(p.price), stock: p.stock,
-      unit: p.unit, 
