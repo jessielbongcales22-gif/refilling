@@ -18,23 +18,43 @@ const __dirname = path.dirname(__filename);
 
 let pool = null;
 
+function requiredEnv(name) {
+  if (!process.env[name]) {
+    throw new Error(`Missing environment variable: ${name}`);
+  }
+
+  return process.env[name];
+}
+
+function getSslConfig() {
+  if (process.env.DB_SSL !== "true") {
+    return undefined;
+  }
+
+  if (process.env.DB_CA_CERT) {
+    return {
+      ca: process.env.DB_CA_CERT.replace(/\\n/g, "\n"),
+      rejectUnauthorized: true
+    };
+  }
+
+  return {
+    rejectUnauthorized: false
+  };
+}
+
 function getPool() {
   if (!pool) {
     pool = mysql.createPool({
-      host: process.env.DB_HOST,
+      host: requiredEnv("DB_HOST"),
       port: Number(process.env.DB_PORT || 3306),
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
+      user: requiredEnv("DB_USER"),
+      password: requiredEnv("DB_PASSWORD"),
+      database: requiredEnv("DB_NAME"),
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      ssl:
-        process.env.DB_SSL === "true"
-          ? {
-              rejectUnauthorized: true
-            }
-          : undefined
+      ssl: getSslConfig()
     });
   }
 
@@ -90,7 +110,69 @@ async function initDatabase() {
     )
   `);
 
+  await seedDemoUsers();
+
   console.log("Database tables ready.");
+}
+
+async function seedDemoUsers() {
+  const db = getPool();
+
+  const demoUsers = [
+    {
+      username: "admin",
+      email: "admin@a.a",
+      password: "admin123",
+      role: "admin",
+      phone: "09000000000",
+      address: "Hinunangan, Southern Leyte"
+    },
+    {
+      username: "admin_watermarket",
+      email: "admin@watermarket.com",
+      password: "admin123",
+      role: "admin",
+      phone: "09000000001",
+      address: "Hinunangan, Southern Leyte"
+    },
+    {
+      username: "staff1",
+      email: "staff1@watermarket.com",
+      password: "staff123",
+      role: "staff",
+      phone: "09000000002",
+      address: "Hinunangan, Southern Leyte"
+    }
+  ];
+
+  for (const user of demoUsers) {
+    const [existing] = await db.execute(
+      "SELECT id FROM users WHERE email = ? LIMIT 1",
+      [user.email]
+    );
+
+    if (existing.length === 0) {
+      const passwordHash = await bcrypt.hash(user.password, 10);
+
+      await db.execute(
+        `
+        INSERT INTO users 
+        (username, email, phone, address, password_hash, role)
+        VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+          user.username,
+          user.email,
+          user.phone,
+          user.address,
+          passwordHash,
+          user.role
+        ]
+      );
+
+      console.log(`Seeded demo user: ${user.email}`);
+    }
+  }
 }
 
 app.use(
@@ -112,11 +194,11 @@ app.get("/api/health", async (req, res) => {
       message: "Server and Aiven MySQL connected successfully"
     });
   } catch (error) {
-    console.error("Health check error:", error.message);
+    console.error("Health check error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Server is running, but database connection failed",
+      message: "Database connection failed",
       error: error.message
     });
   }
@@ -186,12 +268,11 @@ app.post("/api/register", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Register error:", error.message);
+    console.error("Register error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Server error during registration",
-      error: error.message
+      message: `Server error during registration: ${error.message}`
     });
   }
 });
@@ -268,12 +349,11 @@ app.post("/api/login", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Login error:", error.message);
+    console.error("Login error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Server error during login",
-      error: error.message
+      message: `Server error during login: ${error.message}`
     });
   }
 });
@@ -293,12 +373,9 @@ app.get("/api/users", async (req, res) => {
       users
     });
   } catch (error) {
-    console.error("Users error:", error.message);
-
     res.status(500).json({
       success: false,
-      message: "Failed to fetch users",
-      error: error.message
+      message: `Failed to fetch users: ${error.message}`
     });
   }
 });
@@ -368,12 +445,9 @@ app.post("/api/orders", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Create order error:", error.message);
-
     res.status(500).json({
       success: false,
-      message: "Failed to record order",
-      error: error.message
+      message: `Failed to record order: ${error.message}`
     });
   }
 });
@@ -397,12 +471,9 @@ app.get("/api/orders", async (req, res) => {
       orders
     });
   } catch (error) {
-    console.error("Orders error:", error.message);
-
     res.status(500).json({
       success: false,
-      message: "Failed to fetch orders",
-      error: error.message
+      message: `Failed to fetch orders: ${error.message}`
     });
   }
 });
@@ -433,12 +504,9 @@ app.patch("/api/orders/:id/status", async (req, res) => {
       message: "Order status updated successfully"
     });
   } catch (error) {
-    console.error("Update order error:", error.message);
-
     res.status(500).json({
       success: false,
-      message: "Failed to update order status",
-      error: error.message
+      message: `Failed to update order status: ${error.message}`
     });
   }
 });
@@ -463,12 +531,9 @@ app.get("/api/logs", async (req, res) => {
       logs
     });
   } catch (error) {
-    console.error("Logs error:", error.message);
-
     res.status(500).json({
       success: false,
-      message: "Failed to fetch logs",
-      error: error.message
+      message: `Failed to fetch logs: ${error.message}`
     });
   }
 });
@@ -501,7 +566,7 @@ app.listen(PORT, "0.0.0.0", async () => {
 
     await initDatabase();
   } catch (error) {
-    console.error("Database connection failed:", error.message);
-    console.error("Server will still run, but database routes may fail.");
+    console.error("Database setup failed:", error.message);
+    console.error("Server is still running, but login/register may fail.");
   }
 });
