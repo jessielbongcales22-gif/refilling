@@ -10,6 +10,14 @@ import { getPool, testConnection } from "./db/connection.js";
 
 dotenv.config();
 
+process.on("uncaughtException", (error) => {
+  console.error("UNCAUGHT EXCEPTION:", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error("UNHANDLED REJECTION:", error);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -26,16 +34,17 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
 app.get("/api/health", async (req, res) => {
   try {
     await testConnection();
 
     res.json({
       success: true,
-      message: "Server and database are running"
+      message: "Server and database connected successfully"
     });
   } catch (error) {
+    console.error("Health check database error:", error);
+
     res.status(500).json({
       success: false,
       message: "Server is running, but database connection failed",
@@ -44,7 +53,6 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-// Login route
 app.post("/api/login", async (req, res) => {
   try {
     const { email, username, password } = req.body;
@@ -61,7 +69,7 @@ app.post("/api/login", async (req, res) => {
     const pool = getPool();
 
     const [users] = await pool.execute(
-      `SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1`,
+      "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
       [loginValue, loginValue]
     );
 
@@ -74,9 +82,12 @@ app.post("/api/login", async (req, res) => {
 
     const user = users[0];
 
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const isPasswordCorrect = await bcrypt.compare(
+      password,
+      user.password_hash
+    );
 
-    if (!isMatch) {
+    if (!isPasswordCorrect) {
       return res.status(401).json({
         success: false,
         message: "Invalid login credentials"
@@ -90,8 +101,10 @@ app.post("/api/login", async (req, res) => {
         email: user.email,
         role: user.role
       },
-      process.env.JWT_SECRET || "temporary-secret-key",
-      { expiresIn: "1d" }
+      process.env.JWT_SECRET || "water-market-secret-key",
+      {
+        expiresIn: "1d"
+      }
     );
 
     res.json({
@@ -118,11 +131,12 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// Optional payment routes
+// Optional payment routes.
+// This prevents Render from crashing if payment.js has missing packages or errors.
 try {
   const paymentModule = await import("./routes/payment.js");
   app.use("/api/payment", paymentModule.default);
-  console.log("Payment routes loaded");
+  console.log("Payment routes loaded.");
 } catch (error) {
   console.warn("Payment routes skipped:", error.message);
 }
@@ -133,16 +147,17 @@ const distPath = path.join(__dirname, "../dist");
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 
-  app.use((req, res, next) => {
+  app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api")) {
       return next();
     }
 
     res.sendFile(path.join(distPath, "index.html"));
   });
+} else {
+  console.warn("dist folder not found. Frontend build may be missing.");
 }
 
-// API 404
 app.use("/api", (req, res) => {
   res.status(404).json({
     success: false,
@@ -150,14 +165,14 @@ app.use("/api", (req, res) => {
   });
 });
 
-// Start server
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`Server running on port ${PORT}`);
 
   try {
     await testConnection();
-    console.log("Database connected successfully");
+    console.log("Database connected successfully.");
   } catch (error) {
     console.error("Database connection failed:", error.message);
+    console.error("Server will continue running.");
   }
 });
