@@ -1,14 +1,14 @@
 {
-  "name": "react-vite-tailwind",
+  "name": "water",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm install",
     "preview": "vite preview",
-    "start": "cd server && node server.js"
-  },
+    "start": "node server/server.js"
+  },  
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
     "clsx": "2.1.1",
@@ -18,6 +18,10 @@
     "react-router-dom": "^7.14.2",
     "recharts": "^3.8.1",
     "tailwind-merge": "3.4.0"
+    "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "mysql2": "^3.6.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
