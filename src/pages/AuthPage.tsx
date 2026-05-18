@@ -6,7 +6,6 @@ import {
   MapPin, Clock, ShoppingCart, Users, Shield, X, ChevronRight
 } from 'lucide-react';
 import AddressPicker from '../components/AddressPicker';
-import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendSmsOTP } from '../services/otpService';
 
 interface AuthPageProps { onLogin: () => void; }
 type SignupStep = 'form' | 'choose-otp' | 'verify-otp' | 'done';
